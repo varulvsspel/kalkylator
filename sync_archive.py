@@ -276,11 +276,18 @@ def sync_thread(sess, idx, t, timeout, delay):
     state = idx.setdefault("threads", {}).setdefault(slug, {})
     last_seen = state.get("latest_ts")
 
-    if last_seen is not None and t["latest_ts"] and int(last_seen) == int(t["latest_ts"]):
-        return "skip"
-
     x = local_last_page(thread_dir)
     y = max(1, int(t["last_page_hint"]))
+
+    # Bara skip om tråden ser komplett ut lokalt
+    if (
+        last_seen is not None
+        and t["latest_ts"]
+        and int(last_seen) == int(t["latest_ts"])
+        and x >= y
+        and x > 0
+    ):
+        return False, "skip"
 
     if x == 0:
         page_range = list(range(1, y + 1))
@@ -292,15 +299,17 @@ def sync_thread(sess, idx, t, timeout, delay):
         page_range = [x]
         action = f"kollar sista sidan {x}"
 
+    wrote_any = False
     for page_num in page_range:
         html = fetch_html(sess, thread_page_url(t["base_url"], page_num), timeout, delay)
         if not verify_thread_identity(html, slug):
             raise RuntimeError(f"identitetstest misslyckades för {slug} page{page_num}")
-        write_if_changed(thread_dir / f"page{page_num}.html", html)
+        if write_if_changed(thread_dir / f"page{page_num}.html", html):
+            wrote_any = True
 
     state["latest_ts"] = t["latest_ts"]
     state["last_page"] = max(x, y)
-    return action
+    return wrote_any, action
 
 def split_fragments(html_fragment: str):
     s = re.sub(r"<br\s*/?>", "\n", html_fragment, flags=re.I)
@@ -426,31 +435,51 @@ def main() -> int:
         print(f"[FEL] kunde inte läsa forumlistan: {e}", file=sys.stderr)
         return 2
 
+    changed_slugs = []
+
     for i, t in enumerate(forum_threads, start=1):
         print(f"[{i}/{len(forum_threads)}] {t['title']}")
         try:
-            msg = sync_thread(sess, idx, t, DEFAULT_TIMEOUT, DEFAULT_DELAY)
+            changed, msg = sync_thread(sess, idx, t, DEFAULT_TIMEOUT, DEFAULT_DELAY)
             print(f"  {t['slug_id']}: {msg}")
+            if changed:
+                changed_slugs.append(t["slug_id"])
         except Exception as e:
             print(f"  {t['slug_id']}: FEL: {e}")
 
     save_json(INDEX_FILE, idx, compact=False)
 
-    by_slug_tag = {}
-    by_slug_no_tag = {}
+    old_tag = load_json(ARCHIVE_TAG, {"bySlug": {}, "threads": []})
+    old_no_tag = load_json(ARCHIVE_NO_TAG, {"bySlug": {}, "threads": []})
 
-    local_dirs = sorted(
-        [p for p in DATA_DIR.iterdir() if p.is_dir() and not p.name.startswith("_")],
-        key=lambda p: p.name.lower(),
-    )
+    by_slug_tag = old_tag.get("bySlug", {})
+    by_slug_no_tag = old_no_tag.get("bySlug", {})
+
+    if not ARCHIVE_TAG.exists() or not ARCHIVE_NO_TAG.exists():
+        targets = sorted(
+            [p.name for p in DATA_DIR.iterdir() if p.is_dir() and not p.name.startswith("_")],
+            key=str.lower,
+        )
+    else:
+        targets = sorted(set(changed_slugs), key=str.lower)
 
     print("SL: bygger archive.json och archive_no_tag.json...")
-    for thread_dir in local_dirs:
+    print(f"SL: parse targets = {len(targets)}")
+
+    for slug_raw in targets:
+        thread_dir = DATA_DIR / slug_raw
         tagged_obj, no_tag_obj = parse_thread(thread_dir)
+        slug = unquote(slug_raw)
+
         if tagged_obj:
             by_slug_tag[tagged_obj["slug"]] = tagged_obj
+        else:
+            by_slug_tag.pop(slug, None)
+
         if no_tag_obj:
             by_slug_no_tag[no_tag_obj["slug"]] = no_tag_obj
+        else:
+            by_slug_no_tag.pop(slug, None)
 
     save_json(ARCHIVE_TAG, build_archive(by_slug_tag), compact=True)
     save_json(ARCHIVE_NO_TAG, build_archive(by_slug_no_tag), compact=True)
