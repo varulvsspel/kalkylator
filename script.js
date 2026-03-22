@@ -1,7 +1,7 @@
-async function loadArchive() {
-  const url = `archive.json?ts=${Date.now()}`;
+async function loadArchive(file) {
+  const url = `${file}?ts=${Date.now()}`;
   const r = await fetch(url, { cache: "no-store" });
-  if (!r.ok) throw new Error(`Kunde inte ladda archive.json (${r.status})`);
+  if (!r.ok) throw new Error(`Kunde inte ladda ${file} (${r.status})`);
   return await r.json();
 }
 let A = null;
@@ -11,6 +11,7 @@ const els = {
   th: $("#threadSelect"),
   exp: $("#exportBtn"),
   src: $("#sourceLine"),
+  mode: $$('input[name="archiveMode"]'),
   view: $$('input[name="voteView"]'),
   animBtn: $("#animateBtn"),
   delay: $("#liveDelayInput"),
@@ -23,11 +24,16 @@ const els = {
   ths: $$("#voteTable thead th"),
   cv: $("#chart")
 };
+const curArchiveFile = () =>
+  els.mode.find(r => r.checked)?.value === "notag"
+    ? "archive_no_tag.json"
+    : "archive.json";
 const st = {
   slug: "",
   votes: [],
   players: [],
   colors: {},
+  archiveFile: "archive.json",
   fp: "",
   sort: "",
   animTimer: null,
@@ -310,7 +316,8 @@ function exportCSV() {
   a.click();
 }
 document.addEventListener("DOMContentLoaded", async () => {
-  A = await loadArchive();
+  st.archiveFile = curArchiveFile();
+  A = await loadArchive(st.archiveFile);
   fillThreads();
   const init = readURL();
   els.delay.value = String(init.delay || 200);
@@ -357,6 +364,29 @@ document.addEventListener("DOMContentLoaded", async () => {
       applyURL();
     });
   });
+  els.mode.forEach(r => r.addEventListener("change", async () => {
+    const oldSlug = st.slug;
+    st.archiveFile = curArchiveFile();
+    A = await loadArchive(st.archiveFile);
+    fillThreads();
+  
+    if (oldSlug && A.bySlug[oldSlug]) {
+      loadThread(oldSlug, false);
+    } else {
+      st.slug = "";
+      st.votes = [];
+      st.players = [];
+      st.fp = "";
+      st.sliderIndex = null;
+      els.th.value = "";
+      els.src.innerHTML = "";
+      els.fp.innerHTML = '<option value="">Alla</option>';
+      els.tbody.innerHTML = "";
+      els.summary.textContent = "";
+      els.cv.getContext("2d").clearRect(0, 0, els.cv.width, els.cv.height);
+      rebuildSlider(false);
+    }
+  }));
   if (init.thread && A.bySlug[init.thread]) {
     // Behåll URL-läget vid direktlänkad load:
     // - fp/sort/view/sliderIndex från URL respekteras
