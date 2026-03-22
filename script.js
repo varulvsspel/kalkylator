@@ -150,7 +150,7 @@ function loadThread(slug, skipURL) {
   if (st.slug) {
     const urlname = `https://www.rollspel.nu/threads/${st.slug}/`;
     const href = `https://www.rollspel.nu/threads/${encodeURI(st.slug)}/`;
-    els.src.innerHTML = `Källa: <a target="_blank" href="${href}">${urlname}</a><br>För SL: https://varulvsspel.github.io/kalkylator/?thread=${st.slug}`;
+    els.src.innerHTML = `Källa: <a target="_blank" href="${href}">${urlname}</a><br><br><p style="font-size: 12pt;"><b>För SL, kopiera: https://varulvsspel.github.io/kalkylator/?thread=${st.slug}</b></p>`;
   } else {
     els.src.innerHTML = "";
   }
