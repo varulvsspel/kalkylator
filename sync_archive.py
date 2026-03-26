@@ -44,7 +44,8 @@ CLEAN_PATTERNS = [
     re.compile(r'data-timestamp="\d+"'),
 ]
 
-VOTE_START = re.compile(r"\bröst\s*:\s*", re.I)
+VOTE_WORD = r"(?:\bröst|\brorösostot)"
+VOTE_START = re.compile(VOTE_WORD + r"\s*:\s*", re.I)
 USER_TAG = re.compile(r'data-username="@([^"]+)"', re.I)
 TRAILING_PUNCT = re.compile(r"[\s\.,!?;:]+$")
 
@@ -379,7 +380,7 @@ def parse_thread(thread_dir: Path):
                 if not VOTE_START.search(plain):
                     continue
 
-                tail_html = re.sub(r"^[\s\S]*?\bröst\s*:\s*", "", frag, count=1, flags=re.I)
+                tail_html = re.sub(rf"^[\s\S]*?{VOTE_WORD}\s*:\s*", "", frag, count=1, flags=re.I)
                 tagged = USER_TAG.search(tail_html)
 
                 if tagged:
