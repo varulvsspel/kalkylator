@@ -322,11 +322,11 @@ function render(vsOverride = null, sourceOverride = null) {
   const [danger, dCnt] = ord[0] || ["Ingen", 0];
 
   const last = chartVotes.length
-  ? chartVotes.reduce((acc, v) =>
-      !acc || +new Date(v.ts) > +new Date(acc) ? v.ts : acc,
-      null
-    )
-  : null;
+    ? chartVotes.reduce((acc, v) =>
+        !acc || +new Date(v.ts) > +new Date(acc) ? v.ts : acc,
+        null
+      )
+    : null;
 	
   els.summary.textContent =
     `⚠️ Risk för utröstning: ${danger} (${dCnt} röster, sedan ${fmt(first[danger])}). Senast röst lagd ${fmt(last)}.`;
