@@ -275,47 +275,147 @@ function sortApply() {
   els.tbody.innerHTML = "";
   rows.forEach(r => els.tbody.appendChild(r));
 }
-function render(vsOverride = null) {
+function render(vsOverride = null, sourceOverride = null) {
   const tableVotes = vsOverride ?? subset();
-  // Staplar: alltid objektivt röstläge (ignorera fp), men följer slider-lim.
-  // Under animation: använd override för att staplarna ska “leva”.
+
+  // Staplar/sammanfattning: alltid objektivt aktuellt röstläge,
+  // ignorerar fp, men följer slider-lim.
+  // Under animation kan sourceOverride användas för att staplarna ska leva korrekt.
   let chartVotes;
-  if (vsOverride) {
+  if (sourceOverride) {
+    chartVotes = getLatest(sourceOverride);
+  } else if (vsOverride) {
     chartVotes = getLatest(vsOverride);
   } else {
     chartVotes = st.votes;
     if (st.lim) chartVotes = chartVotes.filter(v => +new Date(v.ts) <= +st.lim);
     chartVotes = getLatest(chartVotes);
   }
+
   if (!chartVotes.length) {
     els.summary.textContent = "Inga röster att visa.";
     els.tbody.innerHTML = "";
     els.cv.getContext("2d").clearRect(0, 0, els.cv.width, els.cv.height);
     return;
   }
+
+  const sortVotes = vs => vs
+    .slice()
+    .sort((a, b) =>
+      +new Date(a.ts) - +new Date(b.ts) ||
+      Number(a.post || 0) - Number(b.post || 0)
+    );
+
   const cnt = {}, first = {};
-  chartVotes.slice().sort((a, b) => +new Date(a.ts) - +new Date(b.ts)).forEach(v => {
+  sortVotes(chartVotes).forEach(v => {
     cnt[v.to] = (cnt[v.to] || 0) + 1;
-    if (!first[v.to] || +new Date(v.ts) < +new Date(first[v.to])) first[v.to] = v.ts;
+    if (!first[v.to] || +new Date(v.ts) < +new Date(first[v.to])) {
+      first[v.to] = v.ts;
+    }
   });
+
   const ord = Object.entries(cnt).sort((a, b) =>
-    b[1] - a[1] || (+new Date(first[a[0]]) - +new Date(first[b[0]]))
+    b[1] - a[1] ||
+    (+new Date(first[a[0]] || 0) - +new Date(first[b[0]] || 0))
   );
+
   const [danger, dCnt] = ord[0] || ["Ingen", 0];
-  const last = tableVotes.length
-    ? tableVotes.reduce((acc, v) => !acc || +new Date(v.ts) > +new Date(acc) ? v.ts : acc, null)
-    : null;
+
+  const last = chartVotes.length
+  ? chartVotes.reduce((acc, v) =>
+      !acc || +new Date(v.ts) > +new Date(acc) ? v.ts : acc,
+      null
+    )
+  : null;
+	
   els.summary.textContent =
     `⚠️ Risk för utröstning: ${danger} (${dCnt} röster, sedan ${fmt(first[danger])}). Senast röst lagd ${fmt(last)}.`;
+
   els.tbody.innerHTML = "";
-  const hist = {}, run = {}, GC = n => colorOf(n);
-  tableVotes.slice().sort((a, b) => +new Date(a.ts) - +new Date(b.ts)).forEach(v => {
-    run[v.to] = (run[v.to] || 0) + 1;
-    const stand = Object.entries(run).sort((x, y) => y[1] - x[1]);
+
+  const GC = n => colorOf(n);
+  const hist = {};
+
+  // Källa för att räkna ställningen rad-för-rad.
+  // Detta ska INTE vara fp-filtrerat och INTE vara latest-filtrerat.
+  // Det ska vara hela rösthistoriken fram till slider/animation.
+  const sourceVotes = sortVotes(
+    sourceOverride
+      ? sourceOverride
+      : st.votes.filter(v => !st.lim || +new Date(v.ts) <= +st.lim)
+  );
+
+  // Raderna som faktiskt ska visas i tabellen.
+  // Dessa kan vara latest/all/fp/vsOverride.
+  const tableRows = sortVotes(tableVotes);
+
+  function isSameOrBefore(a, b) {
+    const ta = +new Date(a.ts);
+    const tb = +new Date(b.ts);
+
+    if (ta < tb) return true;
+    if (ta > tb) return false;
+
+    return Number(a.post || 0) <= Number(b.post || 0);
+  }
+
+  function standingAt(rowVote) {
+    const active = {};
+    const count = {};
+    const reachedAt = {};
+  
+    sourceVotes
+      .filter(v => isSameOrBefore(v, rowVote))
+      .forEach(v => {
+        const oldTo = active[v.from];
+  
+        if (oldTo) {
+          count[oldTo] = (count[oldTo] || 0) - 1;
+  
+          if (count[oldTo] <= 0) {
+            delete count[oldTo];
+            delete reachedAt[oldTo];
+          } else {
+            reachedAt[oldTo] = {
+              ts: v.ts,
+              post: Number(v.post || 0)
+            };
+          }
+        }
+  
+        active[v.from] = v.to;
+        count[v.to] = (count[v.to] || 0) + 1;
+  
+        reachedAt[v.to] = {
+          ts: v.ts,
+          post: Number(v.post || 0)
+        };
+      });
+  
+    return Object.entries(count).sort((a, b) => {
+      if (b[1] !== a[1]) return b[1] - a[1];
+  
+      const ra = reachedAt[a[0]] || { ts: 0, post: 0 };
+      const rb = reachedAt[b[0]] || { ts: 0, post: 0 };
+  
+      return (
+        +new Date(ra.ts) - +new Date(rb.ts) ||
+        ra.post - rb.post
+      );
+    });
+  }
+
+  tableRows.forEach(v => {
+    const stand = standingAt(v);
+
     const leader = stand[0] ? `${stand[0][0]} (${stand[0][1]})` : "–";
     const runner = stand[1] ? `${stand[1][0]} (${stand[1][1]})` : "–";
+
     hist[v.from] = hist[v.from] || [];
-    if (hist[v.from][hist[v.from].length - 1] !== v.to) hist[v.from].push(v.to);
+    if (hist[v.from][hist[v.from].length - 1] !== v.to) {
+      hist[v.from].push(v.to);
+    }
+
     const chain = hist[v.from].map((n, i, a) => {
       const c = GC(n), safe = enc(n);
       if (i === a.length - 1) {
@@ -324,6 +424,7 @@ function render(vsOverride = null) {
       }
       return `<span style="color:${c}">${safe}</span>`;
     }).join(" → ");
+
     const tr = document.createElement("tr");
     tr.dataset.from = v.from;
     tr.dataset.ts = v.ts || "";
@@ -333,8 +434,10 @@ function render(vsOverride = null) {
       `<td>${fmt(v.ts)}</td>` +
       `<td>${leader}</td>` +
       `<td>${runner}</td>`;
+
     els.tbody.appendChild(tr);
   });
+
   sortApply();
   bars(ord);
 }
@@ -351,7 +454,7 @@ function play() {
     const sub = all.slice(0, i);
     let show = (curView() === "all") ? sub : getLatest(sub);
     if (st.fp) show = show.filter(v => v.from === st.fp);
-    render(show);
+    render(show, sub);
     i++;
     st.animTimer = setTimeout(step, d);
   })();
